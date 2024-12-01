@@ -1,83 +1,45 @@
 package app.revanced.patches.youtube.utils.settings
 
 import app.revanced.patcher.data.ResourceContext
-import app.revanced.patcher.patch.annotation.CompatiblePackage
-import app.revanced.patcher.patch.annotation.Patch
 import app.revanced.patcher.patch.options.PatchOption.PatchExtensions.stringPatchOption
-import app.revanced.patches.shared.patch.mapping.ResourceMappingPatch
-import app.revanced.patches.shared.patch.settings.AbstractSettingsResourcePatch
+import app.revanced.patches.shared.elements.StringsElementsUtils.removeStringsElements
+import app.revanced.patches.shared.mapping.ResourceMappingPatch
+import app.revanced.patches.youtube.utils.compatibility.Constants.COMPATIBLE_PACKAGE
+import app.revanced.patches.youtube.utils.fix.cairo.CairoSettingsPatch
+import app.revanced.patches.youtube.utils.fix.litho.ConversionContextObfuscationPatch
 import app.revanced.patches.youtube.utils.integrations.IntegrationsPatch
 import app.revanced.patches.youtube.utils.resourceid.SharedResourceIdPatch
 import app.revanced.patches.youtube.utils.settings.ResourceUtils.addPreference
-import app.revanced.patches.youtube.utils.settings.ResourceUtils.addReVancedPreference
+import app.revanced.patches.youtube.utils.settings.ResourceUtils.addPreferenceFragment
 import app.revanced.patches.youtube.utils.settings.ResourceUtils.updatePatchStatus
 import app.revanced.patches.youtube.utils.settings.ResourceUtils.updatePatchStatusSettings
-import app.revanced.util.ResourceGroup
-import app.revanced.util.copyResources
+import app.revanced.util.*
+import app.revanced.util.patch.BaseBytecodePatch
+import app.revanced.util.patch.BaseResourcePatch
 import org.w3c.dom.Element
 import java.io.Closeable
 import java.util.concurrent.Executors
 import java.util.concurrent.TimeUnit
+import java.util.jar.Manifest
 
-@Patch(
-    name = "Settings",
+@Suppress("DEPRECATION", "unused")
+object SettingsPatch : BaseResourcePatch(
+    name = "Settings for YouTube",
     description = "Applies mandatory patches to implement ReVanced Extended settings into the application.",
-    dependencies = [
+    dependencies = setOf(
         IntegrationsPatch::class,
         ResourceMappingPatch::class,
         SharedResourceIdPatch::class,
-        SettingsBytecodePatch::class
-    ],
-    compatiblePackages = [
-        CompatiblePackage(
-            "com.google.android.youtube",
-            [
-                "18.25.40",
-                "18.27.36",
-                "18.29.38",
-                "18.30.37",
-                "18.31.40",
-                "18.32.39",
-                "18.33.40",
-                "18.34.38",
-                "18.35.36",
-                "18.36.39",
-                "18.37.36",
-                "18.38.44",
-                "18.39.41",
-                "18.40.34",
-                "18.41.39",
-                "18.42.41",
-                "18.43.45",
-                "18.44.41",
-                "18.45.43",
-                "18.46.45",
-                "18.48.39",
-                "18.49.37",
-                "19.01.34",
-                "19.02.39",
-                "19.03.36",
-                "19.04.38",
-                "19.05.36",
-                "19.06.39",
-                "19.07.40",
-                "19.08.36",
-                "19.09.38",
-                "19.10.39",
-                "19.11.43",
-                "19.12.41",
-                "19.13.37",
-                "19.14.43"
-            ]
-        )
-    ],
+        SettingsBytecodePatch::class,
+        CairoSettingsPatch::class,
+        // Add dependency to the settings patch as a limitation of patch implementation.
+        ConversionContextObfuscationPatch::class,
+    ),
+    compatiblePackages = COMPATIBLE_PACKAGE,
     requiresIntegrations = true
-)
-@Suppress("unused")
-object SettingsPatch : AbstractSettingsResourcePatch(
-    "youtube/settings"
 ), Closeable {
-    private const val DEFAULT_ELEMENT = "About"
+    private const val DEFAULT_POSITION_KEY = "About"
+    private const val DEFAULT_NAME = "ReVanced Extended"
 
     private val SETTINGS_ELEMENTS_MAP = mapOf(
         "Parent settings" to "@string/parent_tools_key",
@@ -101,76 +63,108 @@ object SettingsPatch : AbstractSettingsResourcePatch(
         "Live chat" to "@string/live_chat_key",
         "Captions" to "@string/captions_key",
         "Accessibility" to "@string/accessibility_settings_key",
-        DEFAULT_ELEMENT to "@string/about_key"
+        DEFAULT_POSITION_KEY to "@string/about_key",
     )
 
-    private val InsertPosition by stringPatchOption(
+    private val InsertPosition = stringPatchOption(
         key = "InsertPosition",
-        default = DEFAULT_ELEMENT,
+        default = DEFAULT_POSITION_KEY,
         values = SETTINGS_ELEMENTS_MAP,
         title = "Insert position",
-        description = "Specify the setting name before which the RVX setting should be inserted."
+        description = "The settings menu name that the RVX settings menu should be above.",
+        required = true
     )
 
+    private val RVXSettingsMenuName = stringPatchOption(
+        key = "RVXSettingsMenuName",
+        default = DEFAULT_NAME,
+        title = "RVX settings menu name",
+        description = "The name of the RVX settings menu.",
+        required = true
+    )
+
+    private lateinit var customName: String
+
+    internal lateinit var contexts: ResourceContext
+    internal var upward1831 = false
+    internal var upward1834 = false
+    internal var upward1839 = false
+    internal var upward1842 = false
+    internal var upward1849 = false
+    internal var upward1902 = false
+    internal var upward1912 = false
+    internal var upward1923 = false
+    internal var upward1925 = false
+
     override fun execute(context: ResourceContext) {
-        super.execute(context)
-        contexts = context
-
-        val resourceXmlFile = context["res/values/integers.xml"].readBytes()
-
-        for (threadIndex in 0 until THREAD_COUNT) {
-            threadPoolExecutor.execute thread@{
-                context.xmlEditor[resourceXmlFile.inputStream()].use { editor ->
-                    val resources = editor.file.documentElement.childNodes
-                    val resourcesLength = resources.length
-                    val jobSize = resourcesLength / THREAD_COUNT
-
-                    val batchStart = jobSize * threadIndex
-                    val batchEnd = jobSize * (threadIndex + 1)
-                    element@ for (i in batchStart until batchEnd) {
-                        if (i >= resourcesLength) return@thread
-
-                        val node = resources.item(i)
-                        if (node !is Element) continue
-
-                        if (node.nodeName != "integer" || !node.getAttribute("name")
-                                .startsWith("google_play_services_version")
-                        ) continue
-
-                        val playServicesVersion = node.textContent.toInt()
-
-                        upward1828 = 232900000 <= playServicesVersion
-                        upward1831 = 233200000 <= playServicesVersion
-                        upward1834 = 233502000 <= playServicesVersion
-                        upward1836 = 233700000 <= playServicesVersion
-                        upward1839 = 234002000 <= playServicesVersion
-                        upward1841 = 234200000 <= playServicesVersion
-                        upward1843 = 234400000 <= playServicesVersion
-                        upward1904 = 240502000 <= playServicesVersion
-
-                        break
-                    }
-                }
-            }
-        }
-
-        threadPoolExecutor
-            .also { it.shutdown() }
-            .awaitTermination(Long.MAX_VALUE, TimeUnit.SECONDS)
 
         /**
-         * create directory for the untranslated language resources
+         * check patch options
          */
-        context["res/values-v21"].mkdirs()
+        customName = RVXSettingsMenuName
+            .valueOrThrow()
+
+        // can be a key (case-insensitive) or a value
+        val rawLowerInsertKey = InsertPosition.lowerCaseOrThrow()
+
+        val lowerCaseSettingsMap = SETTINGS_ELEMENTS_MAP.mapKeys { it.key.lowercase() }
+
+        val insertKey = lowerCaseSettingsMap[rawLowerInsertKey]
+            // If not found, look for a matching value in the lowercase settings map
+            ?: lowerCaseSettingsMap.values.find { it == rawLowerInsertKey }
+            // If still not found, use the default position key from the original map
+            ?: SETTINGS_ELEMENTS_MAP[DEFAULT_POSITION_KEY]!!
+
+        /**
+         * set resource context
+         */
+        contexts = context
+
+        /**
+         * set version info
+         */
+        setVersionInfo()
+
+        /**
+         * remove strings duplicated with RVX resources
+         *
+         * YouTube does not provide translations for these strings.
+         * That's why it's been added to RVX resources.
+         * This string also exists in RVX resources, so it must be removed to avoid being duplicated.
+         */
+        context.removeStringsElements(
+            arrayOf("values"),
+            arrayOf(
+                "accessibility_settings_edu_opt_in_text",
+                "accessibility_settings_edu_opt_out_text"
+            )
+        )
+
+        /**
+         * copy arrays, strings and preference
+         */
+        arrayOf(
+            "arrays.xml",
+            "dimens.xml",
+            "strings.xml",
+            "styles.xml"
+        ).forEach { xmlFile ->
+            context.copyXmlNode("youtube/settings/host", "values/$xmlFile", "resources")
+        }
 
         arrayOf(
             ResourceGroup(
-                "layout",
-                "revanced_settings_with_toolbar.xml"
+                "drawable",
+                "revanced_cursor.xml",
             ),
             ResourceGroup(
-                "values-v21",
-                "strings.xml"
+                "layout",
+                "revanced_settings_preferences_category.xml",
+                "revanced_settings_with_toolbar.xml",
+            ),
+            ResourceGroup(
+                "xml",
+                "revanced_prefs.xml",
             )
         ).forEach { resourceGroup ->
             context.copyResources("youtube/settings", resourceGroup)
@@ -179,8 +173,10 @@ object SettingsPatch : AbstractSettingsResourcePatch(
         /**
          * initialize ReVanced Extended Settings
          */
-        val elementKey = SETTINGS_ELEMENTS_MAP[InsertPosition] ?: SETTINGS_ELEMENTS_MAP[DEFAULT_ELEMENT]
-        elementKey?.let { addReVancedPreference("extended_settings", it) }
+        context.addPreferenceFragment(
+            "revanced_extended_settings",
+            insertKey
+        )
 
         /**
          * remove ReVanced Extended Settings divider
@@ -206,56 +202,126 @@ object SettingsPatch : AbstractSettingsResourcePatch(
             }
         }
 
+        /**
+         * set revanced-patches version
+         */
+        val jarManifest = classLoader.getResources("META-INF/MANIFEST.MF")
+        while (jarManifest.hasMoreElements())
+            contexts.updatePatchStatusSettings(
+                "ReVanced Patches",
+                Manifest(jarManifest.nextElement().openStream())
+                    .mainAttributes
+                    .getValue("Version") + ""
+            )
+
+        /**
+         * set revanced-integrations version
+         */
+        val versionName = SettingsBytecodePatch.contexts
+            .findClass { it.sourceFile == "BuildConfig.java" }!!
+            .mutableClass
+            .fields
+            .single { it.name == "VERSION_NAME" }
+            .initialValue
+            .toString()
+            .trim()
+            .replace("\"", "")
+            .replace("&quot;", "")
+
+        contexts.updatePatchStatusSettings(
+            "ReVanced Integrations",
+            versionName
+        )
     }
 
-    private val THREAD_COUNT = Runtime.getRuntime().availableProcessors()
-    private val threadPoolExecutor = Executors.newFixedThreadPool(THREAD_COUNT)
+    override fun close() {
+        /**
+         * change RVX settings menu name
+         * since it must be invoked after the Translations patch, it must be the last in the order.
+         */
+        if (customName != DEFAULT_NAME) {
+            contexts.removeStringsElements(
+                arrayOf("revanced_extended_settings_title")
+            )
+            contexts.xmlEditor["res/values/strings.xml"].use { editor ->
+                val document = editor.file
 
-    internal lateinit var contexts: ResourceContext
-    internal var upward1828: Boolean = false
-    internal var upward1831: Boolean = false
-    internal var upward1834: Boolean = false
-    internal var upward1836: Boolean = false
-    internal var upward1839: Boolean = false
-    internal var upward1841: Boolean = false
-    internal var upward1843: Boolean = false
-    internal var upward1904: Boolean = false
+                mapOf(
+                    "revanced_extended_settings_title" to customName
+                ).forEach { (k, v) ->
+                    val stringElement = document.createElement("string")
+
+                    stringElement.setAttribute("name", k)
+                    stringElement.textContent = v
+
+                    document.getElementsByTagName("resources").item(0)
+                        .appendChild(stringElement)
+                }
+            }
+        }
+    }
+
+    private fun setVersionInfo() {
+        val threadCount = Runtime.getRuntime().availableProcessors()
+        val threadPoolExecutor = Executors.newFixedThreadPool(threadCount)
+
+        val resourceXmlFile = contexts["res/values/integers.xml"].readBytes()
+
+        for (threadIndex in 0 until threadCount) {
+            threadPoolExecutor.execute thread@{
+                contexts.xmlEditor[resourceXmlFile.inputStream()].use { editor ->
+                    val resources = editor.file.documentElement.childNodes
+                    val resourcesLength = resources.length
+                    val jobSize = resourcesLength / threadCount
+
+                    val batchStart = jobSize * threadIndex
+                    val batchEnd = jobSize * (threadIndex + 1)
+                    element@ for (i in batchStart until batchEnd) {
+                        if (i >= resourcesLength) return@thread
+
+                        val node = resources.item(i)
+                        if (node !is Element) continue
+
+                        if (node.nodeName != "integer" || !node.getAttribute("name")
+                                .startsWith("google_play_services_version")
+                        ) continue
+
+                        val playServicesVersion = node.textContent.toInt()
+
+                        upward1831 = 233200000 <= playServicesVersion
+                        upward1834 = 233500000 <= playServicesVersion
+                        upward1839 = 234000000 <= playServicesVersion
+                        upward1842 = 234302000 <= playServicesVersion
+                        upward1849 = 235000000 <= playServicesVersion
+                        upward1902 = 240204000 < playServicesVersion
+                        upward1912 = 241302000 <= playServicesVersion
+                        upward1923 = 242402000 <= playServicesVersion
+                        upward1925 = 242599000 <= playServicesVersion
+
+                        break
+                    }
+                }
+            }
+        }
+
+        threadPoolExecutor
+            .also { it.shutdown() }
+            .awaitTermination(Long.MAX_VALUE, TimeUnit.SECONDS)
+    }
 
     internal fun addPreference(settingArray: Array<String>) {
         contexts.addPreference(settingArray)
     }
 
-    internal fun addReVancedPreference(key: String, insertKey: String = "misc") {
-        contexts.addReVancedPreference(key, insertKey)
+    internal fun updatePatchStatus(patch: BaseResourcePatch) {
+        updatePatchStatus(patch.name!!)
     }
 
-    internal fun updatePatchStatus(patchTitle: String) {
-        contexts.updatePatchStatus(patchTitle)
+    internal fun updatePatchStatus(patch: BaseBytecodePatch) {
+        updatePatchStatus(patch.name!!)
     }
 
-    override fun close() {
-        SettingsBytecodePatch.contexts.classes.forEach { classDef ->
-            if (classDef.sourceFile != "BuildConfig.java")
-                return@forEach
-
-            classDef.fields.forEach { field ->
-                if (field.name == "VERSION_NAME") {
-                    contexts.updatePatchStatusSettings(
-                        "ReVanced Integrations",
-                        field.initialValue.toString().trim()
-                    )
-                }
-            }
-        }
-
-        contexts["res/xml/revanced_prefs.xml"].apply {
-            writeText(
-                readText()
-                    .replace(
-                        "&quot;",
-                        ""
-                    )
-            )
-        }
+    internal fun updatePatchStatus(patchName: String) {
+        contexts.updatePatchStatus(patchName)
     }
 }

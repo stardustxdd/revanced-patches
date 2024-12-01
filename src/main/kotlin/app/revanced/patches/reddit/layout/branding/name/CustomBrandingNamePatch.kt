@@ -1,34 +1,43 @@
 package app.revanced.patches.reddit.layout.branding.name
 
 import app.revanced.patcher.data.ResourceContext
-import app.revanced.patcher.patch.PatchException
-import app.revanced.patcher.patch.ResourcePatch
-import app.revanced.patcher.patch.annotation.CompatiblePackage
-import app.revanced.patcher.patch.annotation.Patch
 import app.revanced.patcher.patch.options.PatchOption.PatchExtensions.stringPatchOption
+import app.revanced.patches.reddit.utils.compatibility.Constants.COMPATIBLE_PACKAGE
+import app.revanced.util.patch.BaseResourcePatch
+import app.revanced.util.valueOrThrow
 import java.io.FileWriter
 import java.nio.file.Files
 
-@Patch(
-    name = "Custom branding name Reddit",
+@Suppress("DEPRECATION", "unused")
+object CustomBrandingNamePatch : BaseResourcePatch(
+    name = "Custom branding name for Reddit",
     description = "Renames the Reddit app to the name specified in options.json.",
-    compatiblePackages = [CompatiblePackage("com.reddit.frontpage")],
+    compatiblePackages = COMPATIBLE_PACKAGE,
     use = false
-)
-@Suppress("unused")
-object CustomBrandingNamePatch : ResourcePatch() {
+) {
+    private const val ORIGINAL_APP_NAME = "Reddit"
     private const val APP_NAME = "RVX Reddit"
 
-    private val AppName by stringPatchOption(
+    private val AppName = stringPatchOption(
         key = "AppName",
-        default = APP_NAME,
+        default = ORIGINAL_APP_NAME,
+        values = mapOf(
+            "Default" to APP_NAME,
+            "Original" to ORIGINAL_APP_NAME,
+        ),
         title = "App name",
-        description = "The name of the app."
+        description = "The name of the app.",
+        required = true
     )
 
     override fun execute(context: ResourceContext) {
         val appName = AppName
-            ?: throw PatchException("Invalid app name.")
+            .valueOrThrow()
+
+        if (appName == ORIGINAL_APP_NAME) {
+            println("INFO: App name will remain unchanged as it matches the original.")
+            return
+        }
 
         val resDirectory = context["res"]
 

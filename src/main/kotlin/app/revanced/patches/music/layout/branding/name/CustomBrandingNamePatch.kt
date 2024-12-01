@@ -1,45 +1,44 @@
 package app.revanced.patches.music.layout.branding.name
 
 import app.revanced.patcher.data.ResourceContext
-import app.revanced.patcher.patch.PatchException
-import app.revanced.patcher.patch.annotation.CompatiblePackage
-import app.revanced.patcher.patch.annotation.Patch
 import app.revanced.patcher.patch.options.PatchOption.PatchExtensions.stringPatchOption
-import app.revanced.patches.music.utils.integrations.Constants.LANGUAGE_LIST
-import app.revanced.patches.shared.patch.elements.AbstractRemoveStringsElementsPatch
+import app.revanced.patches.music.utils.compatibility.Constants.COMPATIBLE_PACKAGE
+import app.revanced.patches.shared.elements.StringsElementsUtils.removeStringsElements
+import app.revanced.util.patch.BaseResourcePatch
+import app.revanced.util.valueOrThrow
 
-@Patch(
-    name = "Custom branding name YouTube Music",
+@Suppress("DEPRECATION", "unused")
+object CustomBrandingNamePatch : BaseResourcePatch(
+    name = "Custom branding name for YouTube Music",
     description = "Renames the YouTube Music app to the name specified in options.json.",
-    compatiblePackages = [CompatiblePackage("com.google.android.apps.youtube.music")],
-    use = false
-)
-@Suppress("unused")
-object CustomBrandingNamePatch : AbstractRemoveStringsElementsPatch(
-    LANGUAGE_LIST,
-    arrayOf("app_launcher_name", "app_name")
+    compatiblePackages = COMPATIBLE_PACKAGE,
+    use = false,
 ) {
     private const val APP_NAME_NOTIFICATION = "ReVanced Extended Music"
     private const val APP_NAME_LAUNCHER = "RVX Music"
 
-    private val AppNameNotification by stringPatchOption(
+    private val AppNameNotification = stringPatchOption(
         key = "AppNameNotification",
-        default = APP_NAME_NOTIFICATION,
+        default = APP_NAME_LAUNCHER,
         values = mapOf(
-            "Full name" to APP_NAME_NOTIFICATION,
-            "Short name" to APP_NAME_LAUNCHER
+            "ReVanced Extended Music" to APP_NAME_NOTIFICATION,
+            "RVX Music" to APP_NAME_LAUNCHER,
+            "YouTube Music" to "YouTube Music",
+            "YT Music" to "YT Music",
         ),
         title = "App name in notification panel",
         description = "The name of the app as it appears in the notification panel.",
         required = true
     )
 
-    private val AppNameLauncher by stringPatchOption(
+    private val AppNameLauncher = stringPatchOption(
         key = "AppNameLauncher",
         default = APP_NAME_LAUNCHER,
         values = mapOf(
-            "Full name" to APP_NAME_NOTIFICATION,
-            "Short name" to APP_NAME_LAUNCHER
+            "ReVanced Extended Music" to APP_NAME_NOTIFICATION,
+            "RVX Music" to APP_NAME_LAUNCHER,
+            "YouTube Music" to "YouTube Music",
+            "YT Music" to "YT Music",
         ),
         title = "App name in launcher",
         description = "The name of the app as it appears in the launcher.",
@@ -47,27 +46,32 @@ object CustomBrandingNamePatch : AbstractRemoveStringsElementsPatch(
     )
 
     override fun execute(context: ResourceContext) {
-        super.execute(context)
 
-        AppNameNotification?.let { notificationName ->
-            AppNameLauncher?.let { launcherName ->
-                context.xmlEditor["res/values/strings.xml"].use { editor ->
-                    val document = editor.file
+        // Check patch options first.
+        val notificationName = AppNameNotification
+            .valueOrThrow()
+        val launcherName = AppNameLauncher
+            .valueOrThrow()
 
-                    mapOf(
-                        "app_name" to notificationName,
-                        "app_launcher_name" to launcherName
-                    ).forEach { (k, v) ->
-                        val stringElement = document.createElement("string")
+        context.removeStringsElements(
+            arrayOf("app_launcher_name", "app_name")
+        )
 
-                        stringElement.setAttribute("name", k)
-                        stringElement.textContent = v
+        context.xmlEditor["res/values/strings.xml"].use { editor ->
+            val document = editor.file
 
-                        document.getElementsByTagName("resources").item(0)
-                            .appendChild(stringElement)
-                    }
-                }
-            } ?: throw PatchException("Invalid app name.")
-        } ?: throw PatchException("Invalid app name.")
+            mapOf(
+                "app_name" to notificationName,
+                "app_launcher_name" to launcherName
+            ).forEach { (k, v) ->
+                val stringElement = document.createElement("string")
+
+                stringElement.setAttribute("name", k)
+                stringElement.textContent = v
+
+                document.getElementsByTagName("resources").item(0)
+                    .appendChild(stringElement)
+            }
+        }
     }
 }
